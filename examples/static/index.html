@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>GCP Agent UI</title>
+  <style>
+    body { font-family: sans-serif; max-width: 720px; margin: 2rem auto; }
+    #log { white-space: pre; background: #f9f9f9; padding: .5rem; }
+  </style>
+</head>
+<body>
+  <h1>GCP Agent (frontend)</h1>
+
+  <button id="login">1 . Launch & Log In</button>
+  <button id="done" disabled>2 . Done logging in</button>
+  <hr>
+
+  <input id="task" style="width:75%" placeholder="e.g. Open Cloud Storage › Create bucket">
+  <button id="send" disabled>Run task</button>
+
+  <h3>Server replies</h3>
+  <pre id="log"></pre>
+
+<script>
+const log = x => {
+  document.getElementById('log').textContent += JSON.stringify(x, null, 2)+"\n";
+};
+
+document.getElementById('login').onclick = () => {
+  fetch('/login', {method:'POST'}).then(r=>r.json()).then(j=>{
+    log(j); document.getElementById('done').disabled = false;
+  });
+};
+
+document.getElementById('done').onclick = () => {
+  fetch('/confirm_login', {method:'POST'}).then(r=>r.json()).then(j=>{
+    log(j);
+    document.getElementById('send').disabled = false;
+  });
+};
+
+document.getElementById('send').onclick = () => {
+  const task = document.getElementById('task').value.trim();
+  if (!task) return;
+  fetch('/action', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({task})
+  }).then(r=>r.json()).then(log);
+};
+</script>
+</body>
+</html>
