@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # gcp_manual_login_planner.py
 # ---------------------------------------------------------------
-#  ▸ execution  LLM : gpt‑4.1
-#  ▸ planning   LLM : gpt‑4o
+#  ▸ execution  LLM : gpt‑4.1‑mini      (fast / cheap)
+#  ▸ planning   LLM : gpt‑4o            (bigger / better reasoning)
 # ---------------------------------------------------------------
 
 import os, sys, asyncio, json, logging
@@ -10,6 +10,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain.callbacks.base import BaseCallbackHandler
+from langchain_core.messages import HumanMessage
 from browser_use import Agent
 from mss import mss
 from PIL import Image
@@ -20,7 +21,7 @@ from PIL import Image
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv()
 
-BASE_DIR = "runs\OpenAI"
+BASE_DIR = "runs"
 os.makedirs(BASE_DIR, exist_ok=True)
 
 # Enable LangChain debug logging (local only)
@@ -47,6 +48,7 @@ def serialize_history(history):
 # -----------------------------------------------------------------
 # 3.  Custom Callback Handler for LLM Prompts and Responses
 # -----------------------------------------------------------------
+# Change: Updated to handle gen.message.content instead of gen.text, and added debugging for empty content
 class LLMLogCallback(BaseCallbackHandler):
     def __init__(self, log_file):
         self.log_file = log_file
@@ -62,16 +64,45 @@ class LLMLogCallback(BaseCallbackHandler):
     def on_llm_end(self, response, **kwargs):
         with open(self.log_file, "a", encoding="utf-8") as f:
             f.write(f"\n=== LLM Response ===\n")
-            for generation in response.generations:
-                for gen in generation:
-                    try:
-                        # Attempt to parse and pretty-print the JSON
-                        json_response = json.loads(gen.text)
-                        formatted_json = json.dumps(json_response, indent=4, ensure_ascii=False)
-                        f.write(f"{formatted_json}\n")
-                    except json.JSONDecodeError:
-                        # If not valid JSON, log as plain text
-                        f.write(f"{gen.text}\n")
+            try:
+                f.write(f"Response type: {type(response)}\n")
+                if hasattr(response, 'generations'):
+                    if not response.generations:
+                        f.write("No generations found in response\n")
+                    else:
+                        for generation_list in response.generations:
+                            for gen in generation_list:
+                                if hasattr(gen, 'message') and hasattr(gen.message, 'content'):
+                                    content = gen.message.content
+                                    f.write(f"Content length: {len(content)}\n")
+                                    if content:
+                                        try:
+                                            json_response = json.loads(content)
+                                            formatted_json = json.dumps(json_response, indent=4, ensure_ascii=False)
+                                            f.write(f"{formatted_json}\n")
+                                        except json.JSONDecodeError:
+                                            f.write(f"{content}\n")
+                                    else:
+                                        f.write("Empty content\n")
+                                else:
+                                    f.write("Generation lacks 'message' or 'content' attribute\n")
+                else:
+                    if hasattr(response, 'content'):
+                        content = response.content
+                        f.write(f"Content length: {len(content)}\n")
+                        if content:
+                            try:
+                                json_response = json.loads(content)
+                                formatted_json = json.dumps(json_response, indent=4, ensure_ascii=False)
+                                f.write(f"{formatted_json}\n")
+                            except json.JSONDecodeError:
+                                f.write(f"{content}\n")
+                        else:
+                            f.write("Empty content\n")
+                    else:
+                        f.write("Response lacks 'generations' or 'content' attributes\n")
+            except Exception as e:
+                f.write(f"Error logging response: {str(e)}\n")
             f.write("\n")
             f.flush()
 
@@ -177,7 +208,6 @@ async def main():
         planner_llm=plan_llm,
         planner_interval=1,
         use_vision_for_planner=False,
-        is_planner_reasoning=False,
         close_browser_on_run=False,
         enable_memory=False,
     )
@@ -198,8 +228,32 @@ async def main():
     run_logger.info("Running Agent for Task")
     history = await first_agent.run()
 
-    # Serialize and log agent history
-    serialized_history = serialize_history(history)
+    # Executor LLM Action Logging: Log the actions performed by the first agent
+    # - The history object contains a list of steps the agent took.
+    # - We serialize the history to access actions like clicking or navigating.
+    # - For each step, we log the action (e.g., {"click_element": {"index": 35}}) and any LLM output.
+    # - This ensures we capture what the executor LLM instructed the agent to do, even if its raw response was empty.
+    with open(executor_log_file, "a", encoding="utf-8") as f:
+        f.write("\n=== Executor Actions from History (Initial Run) ===\n")
+        serialized_history = serialize_history(history)
+        for i, entry in enumerate(serialized_history):
+            f.write(f"\nStep {i+1}:\n")
+            if isinstance(entry, dict):
+                # Log the action if it exists in the history entry
+                if 'action' in entry:
+                    f.write(f"  Action: {json.dumps(entry['action'], indent=4, ensure_ascii=False)}\n")
+                # Log the LLM output if available (for reference)
+                if 'llm_output' in entry:
+                    f.write(f"  LLM Output: {json.dumps(entry['llm_output'], indent=4, ensure_ascii=False)}\n")
+                # Log other relevant fields for context (excluding action and llm_output)
+                for key, value in entry.items():
+                    if key not in ['action', 'llm_output']:
+                        f.write(f"  {key}: {value}\n")
+            else:
+                f.write(f"  {entry}\n")
+        f.write("\n")
+
+    # Serialize and log agent history to run_result.json
     with open(os.path.join(run_dir, "run_result.json"), "w", encoding="utf-8") as f:
         json.dump(serialized_history, f, indent=2)
 
@@ -210,16 +264,17 @@ async def main():
         if not pages:
             page = await context.new_page()
             await page.goto("about:blank")
+            current_url = "about:blank"
         else:
             page = pages[0]
-        current_url = await page.evaluate("() => window.location.href")
+            current_url = await page.evaluate("() => window.location.href")
         run_logger.info(f"Browser State After Run: URL = {current_url}")
     except Exception as e:
         run_logger.error(f"Browser State Error: {str(e)}")
+        current_url = "unknown"
 
     # Force executor LLM call to confirm sign-in page
     try:
-        from langchain_core.messages import HumanMessage
         prompt = f"""
         Current URL: {current_url}
         Task: Verify that the Google Cloud Platform sign-in page is loaded and identify the next action.
@@ -233,7 +288,10 @@ async def main():
         with open(executor_log_file, "a", encoding="utf-8") as f:
             f.write(f"\n=== Forced Executor LLM Call ===\n")
             f.write(f"Prompt: {prompt}\n")
-            f.write(f"Response: {response.content}\n")
+            if hasattr(response, 'content'):
+                f.write(f"Response: {response.content}\n")
+            else:
+                f.write("No response content\n")
             f.flush()
     except Exception as e:
         with open(executor_log_file, "a", encoding="utf-8") as f:
@@ -291,7 +349,6 @@ async def main():
                 llm=exec_llm_task,
                 planner_llm=plan_llm_task,
                 planner_interval=1,
-                is_planner_reasoning=False,
                 browser=shared_browser,
                 browser_context=shared_browser_ctx,
                 close_browser_on_run=False,
@@ -314,8 +371,32 @@ async def main():
             task_run_logger.info("Running Agent for Task")
             history = await fresh_agent.run()
 
-            # Serialize and log agent history
-            serialized_history = serialize_history(history)
+            # Executor LLM Action Logging: Log the actions performed by the fresh agent
+            # - Similar to the initial run, we log actions from the agent's history.
+            # - This captures what the executor LLM did for the user-specified task (e.g., "go to GCP billing section").
+            # - For each step, we log the action (e.g., {"navigate_to": {"url": "https://console.cloud.google.com/billing"}}).
+            # - We also include the LLM output and other history details for context.
+            with open(task_executor_log, "a", encoding="utf-8") as f:
+                f.write("\n=== Executor Actions from History (Command Loop Task) ===\n")
+                serialized_history = serialize_history(history)
+                for i, entry in enumerate(serialized_history):
+                    f.write(f"\nStep {i+1}:\n")
+                    if isinstance(entry, dict):
+                        # Log the action if it exists in the history entry
+                        if 'action' in entry:
+                            f.write(f"  Action: {json.dumps(entry['action'], indent=4, ensure_ascii=False)}\n")
+                        # Log the LLM output if available (for reference)
+                        if 'llm_output' in entry:
+                            f.write(f"  LLM Output: {json.dumps(entry['llm_output'], indent=4, ensure_ascii=False)}\n")
+                        # Log other relevant fields for context (excluding action and llm_output)
+                        for key, value in entry.items():
+                            if key not in ['action', 'llm_output']:
+                                f.write(f"  {key}: {value}\n")
+                    else:
+                        f.write(f"  {entry}\n")
+                f.write("\n")
+
+            # Serialize and log agent history to run_result.json
             with open(os.path.join(task_run_dir, "run_result.json"), "w", encoding="utf-8") as f:
                 json.dump(serialized_history, f, indent=2)
 
@@ -326,12 +407,14 @@ async def main():
                 if not pages:
                     page = await context.new_page()
                     await page.goto("about:blank")
+                    current_url = "about:blank"
                 else:
                     page = pages[0]
-                current_url = await page.evaluate("() => window.location.href")
+                    current_url = await page.evaluate("() => window.location.href")
                 task_run_logger.info(f"Browser State After Run: URL = {current_url}")
             except Exception as e:
                 task_run_logger.error(f"Browser State Error: {str(e)}")
+                current_url = "unknown"
 
             # Force executor LLM call for command loop task
             try:
@@ -348,7 +431,10 @@ async def main():
                 with open(task_executor_log, "a", encoding="utf-8") as f:
                     f.write(f"\n=== Forced Executor LLM Call ===\n")
                     f.write(f"Prompt: {prompt}\n")
-                    f.write(f"Response: {response.content}\n")
+                    if hasattr(response, 'content'):
+                        f.write(f"Response: {response.content}\n")
+                    else:
+                        f.write("No response content\n")
                     f.flush()
             except Exception as e:
                 with open(task_executor_log, "a", encoding="utf-8") as f:

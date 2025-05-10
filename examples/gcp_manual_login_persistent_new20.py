@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # gcp_manual_login_planner.py
 # ---------------------------------------------------------------
-#  ▸ execution  LLM : gpt‑4.1
-#  ▸ planning   LLM : gpt‑4o
+#  ▸ execution  LLM : gpt‑4.1‑mini      (fast / cheap)
+#  ▸ planning   LLM : gpt‑4o            (bigger / better reasoning)
 # ---------------------------------------------------------------
 
 import os, sys, asyncio, json, logging
@@ -20,7 +20,7 @@ from PIL import Image
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv()
 
-BASE_DIR = "runs\OpenAI"
+BASE_DIR = "runs"
 os.makedirs(BASE_DIR, exist_ok=True)
 
 # Enable LangChain debug logging (local only)
@@ -62,16 +62,36 @@ class LLMLogCallback(BaseCallbackHandler):
     def on_llm_end(self, response, **kwargs):
         with open(self.log_file, "a", encoding="utf-8") as f:
             f.write(f"\n=== LLM Response ===\n")
-            for generation in response.generations:
-                for gen in generation:
-                    try:
-                        # Attempt to parse and pretty-print the JSON
-                        json_response = json.loads(gen.text)
-                        formatted_json = json.dumps(json_response, indent=4, ensure_ascii=False)
-                        f.write(f"{formatted_json}\n")
-                    except json.JSONDecodeError:
-                        # If not valid JSON, log as plain text
-                        f.write(f"{gen.text}\n")
+            try:
+                f.write(f"Response type: {type(response)}\n")
+                if hasattr(response, 'generations'):
+                    if not response.generations:
+                        f.write("No generations found in response\n")
+                    else:
+                        for generation_list in response.generations:
+                            for gen in generation_list:
+                                if hasattr(gen, 'message') and hasattr(gen.message, 'content'):
+                                    content = gen.message.content
+                                    try:
+                                        json_response = json.loads(content)
+                                        formatted_json = json.dumps(json_response, indent=4, ensure_ascii=False)
+                                        f.write(f"{formatted_json}\n")
+                                    except json.JSONDecodeError:
+                                        f.write(f"{content}\n")
+                                else:
+                                    f.write("Generation lacks 'message' or 'content' attribute\n")
+                else:
+                    if hasattr(response, 'content'):
+                        try:
+                            json_response = json.loads(response.content)
+                            formatted_json = json.dumps(json_response, indent=4, ensure_ascii=False)
+                            f.write(f"{formatted_json}\n")
+                        except json.JSONDecodeError:
+                            f.write(f"{response.content}\n")
+                    else:
+                        f.write("Response lacks 'generations' or 'content' attributes\n")
+            except Exception as e:
+                f.write(f"Error logging response: {str(e)}\n")
             f.write("\n")
             f.flush()
 
@@ -177,7 +197,6 @@ async def main():
         planner_llm=plan_llm,
         planner_interval=1,
         use_vision_for_planner=False,
-        is_planner_reasoning=False,
         close_browser_on_run=False,
         enable_memory=False,
     )
@@ -230,6 +249,20 @@ async def main():
         }}
         """
         response = await exec_llm.ainvoke([HumanMessage(content=prompt)])
+        # Add direct logging here
+        with open(executor_log_file, "a", encoding="utf-8") as f:
+            f.write(f"\n=== LLM Response ===\n")
+            f.write(f"Response type: {type(response)}\n")
+            if hasattr(response, 'generations'):
+                for generation_list in response.generations:
+                    for gen in generation_list:
+                        if hasattr(gen, 'message') and hasattr(gen.message, 'content'):
+                            f.write(f"Content: {gen.message.content}\n")
+                        else:
+                            f.write("No content\n")
+            else:
+                f.write("No generations found\n")
+        # Existing callback logging
         with open(executor_log_file, "a", encoding="utf-8") as f:
             f.write(f"\n=== Forced Executor LLM Call ===\n")
             f.write(f"Prompt: {prompt}\n")
@@ -291,7 +324,6 @@ async def main():
                 llm=exec_llm_task,
                 planner_llm=plan_llm_task,
                 planner_interval=1,
-                is_planner_reasoning=False,
                 browser=shared_browser,
                 browser_context=shared_browser_ctx,
                 close_browser_on_run=False,
@@ -345,6 +377,20 @@ async def main():
                 }}
                 """
                 response = await exec_llm_task.ainvoke([HumanMessage(content=prompt)])
+                # Add direct logging here
+                with open(task_executor_log, "a", encoding="utf-8") as f:
+                    f.write(f"\n=== LLM Response ===\n")
+                    f.write(f"Response type: {type(response)}\n")
+                    if hasattr(response, 'generations'):
+                        for generation_list in response.generations:
+                            for gen in generation_list:
+                                if hasattr(gen, 'message') and hasattr(gen.message, 'content'):
+                                    f.write(f"Content: {gen.message.content}\n")
+                                else:
+                                    f.write("No content\n")
+                    else:
+                        f.write("No generations found\n")
+                # Existing callback logging
                 with open(task_executor_log, "a", encoding="utf-8") as f:
                     f.write(f"\n=== Forced Executor LLM Call ===\n")
                     f.write(f"Prompt: {prompt}\n")
