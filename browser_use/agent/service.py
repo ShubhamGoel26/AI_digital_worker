@@ -94,7 +94,7 @@ class Agent(Generic[Context]):
 		llm: BaseChatModel,
 		# Optional parameters
 		browser: Browser | None = None,
-		close_browser_on_run: bool = True, #new variable to control browser
+		close_browser_on_run: bool = True,  # new variable to control browser
 		browser_context: BrowserContext | None = None,
 		controller: Controller[Context] = Controller(),
 		# Initial agent run parameters

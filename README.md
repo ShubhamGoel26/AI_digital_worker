@@ -200,4 +200,3 @@ If you use Browser Use in your research or project, please cite:
 <div align="center">
 Made with ❤️ in Zurich and San Francisco
  </div>
-
