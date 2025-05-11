@@ -4,7 +4,7 @@
 ---
 
 <div align="center">
-  <img src="docs/banner.png" alt="Pipeline banner" width="80%"/>
+  <img src="docs/banner.png" alt="Pipeline banner" width="40%"/>
 </div>
 
 ---
