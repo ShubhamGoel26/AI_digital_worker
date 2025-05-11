@@ -1,4 +1,5 @@
 Improving VLM Instruct Models for Cloud Console Automation
+
 Banner image illustrating cloud console automation with VLMs.
 This project enhances Vision-Language Models (VLMs), specifically Qwen-2.5 VL-Chat, to navigate and perform tasks in cloud management consoles, with a focus on Google Cloud Platform (GCP). We introduce a novel dataset of 10,061 screenshot-instruction-action triples and demonstrate that our VLM completes 83% of 236 GCP workflows with ≤20 prompts. Developed as part of the DS-GA 1012 Natural Language Understanding course at NYU Center for Data Science, this work addresses the unique challenges of cloud consoles—nested menus, dynamic DOM elements, and strict security policies—paving the way for reliable GUI automation.
 
